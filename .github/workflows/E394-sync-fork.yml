@@ -1,0 +1,115 @@
+name: E394 - Sync Fork
+
+on:
+  schedule:
+    - cron: '0 0 * * *' 
+  workflow_dispatch:
+
+env:
+  GH_PAT: ${{ secrets.EXTERNAL_REPO_PAT }}
+  DEFAULT_BRANCH: main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.EXTERNAL_REPO_PAT }}
+          fetch-depth: 0
+          
+      - name: Configure Git user
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+      - name: Get upstream repository name dynamically
+        id: upstream
+        run: |
+          echo "📡 Recupero info sul repository..."
+          API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          
+          RESPONSE=$(curl -s -H "Authorization: token $GH_PAT" $API_URL)
+          PARENT_FULL_NAME=$(echo "$RESPONSE" | jq -r '.parent.full_name // empty')
+          if [[ -z "$PARENT_FULL_NAME" ]]; then
+            echo "❌ Questa repository non è un fork oppure il token non ha accesso all'upstream."
+            exit 1
+          fi
+          echo "✅ Upstream rilevato: $PARENT_FULL_NAME"
+          echo "UPSTREAM_REPO=$PARENT_FULL_NAME" >> "$GITHUB_ENV"
+          
+      - name: Sync with upstream
+        run: |
+          echo "🔄 Sincronizzazione con $UPSTREAM_REPO..."
+          UPSTREAM_URL="https://${GH_PAT}@github.com/${UPSTREAM_REPO}.git"
+          
+          git remote add upstream "$UPSTREAM_URL" || git remote set-url upstream "$UPSTREAM_URL"
+          git fetch upstream
+          
+          # Verifica se ci sono differenze
+          if git diff --quiet HEAD upstream/${DEFAULT_BRANCH}; then
+            echo "✅ Il fork è già aggiornato"
+            exit 0
+          fi
+          
+          echo "📝 Rilevate differenze, tentativo di rebase..."
+          
+          # File da proteggere in caso di fallimento rebase
+          PROTECTED_FILES=(
+            ".github/workflows/E394-sync-fork.yml"
+            # Aggiungi altri file che vuoi proteggere
+          )
+          
+          # Tenta il rebase
+          if git rebase upstream/${DEFAULT_BRANCH}; then
+            echo "✅ Rebase completato con successo"
+          else
+            echo "⚠️ Rebase fallito - usando strategia reset + restore"
+            git rebase --abort
+            
+            # Salva i file protetti
+            echo "🛡️ Salvando file protetti..."
+            mkdir -p /tmp/protected
+            for file in "${PROTECTED_FILES[@]}"; do
+              if [[ -f "$file" ]]; then
+                mkdir -p "/tmp/protected/$(dirname "$file")"
+                cp "$file" "/tmp/protected/$file"
+                echo "  ✅ Salvato: $file"
+              fi
+            done
+            
+            # Reset hard a upstream (copia tutto)
+            echo "🔄 Reset hard a upstream..."
+            git reset --hard upstream/${DEFAULT_BRANCH}
+            
+            # Ripristina i file protetti
+            echo "🔄 Ripristinando file protetti..."
+            CHANGES_MADE=false
+            for file in "${PROTECTED_FILES[@]}"; do
+              if [[ -f "/tmp/protected/$file" ]]; then
+                mkdir -p "$(dirname "$file")"
+                cp "/tmp/protected/$file" "$file"
+                git add "$file"
+                CHANGES_MADE=true
+                echo "  ✅ Ripristinato: $file"
+              fi
+            done
+            
+            # Committa i file ripristinati se necessario
+            if [[ "$CHANGES_MADE" == "true" ]]; then
+              if ! git diff --staged --quiet; then
+                git commit -m "Restore protected files after upstream sync"
+                echo "✅ File protetti ripristinati"
+              fi
+            fi
+          fi
+          
+      - name: Push changes to fork
+        run: |
+          echo "📤 Pushing aggiornamenti al fork..."
+          git push origin ${DEFAULT_BRANCH} --force-with-lease
