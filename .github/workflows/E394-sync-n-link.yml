@@ -22,15 +22,17 @@ jobs:
         with:
           token: ${{ secrets.EXTERNAL_REPO_PAT }}
           fetch-depth: 0
-          
+         
       - name: Configure Git user
         run: |
+        
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
       - name: Get upstream repository name dynamically
         id: upstream
         run: |
+        
           echo "📡 Recupero info sul repository..."
           API_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           
@@ -42,15 +44,16 @@ jobs:
           fi
           echo "✅ Upstream rilevato: $PARENT_FULL_NAME"
           echo "UPSTREAM_REPO=$PARENT_FULL_NAME" >> "$GITHUB_ENV"
-          
+        
       - name: Sync with upstream
         run: |
+        
           echo "🔄 Sincronizzazione con $UPSTREAM_REPO..."
           UPSTREAM_URL="https://${GH_PAT}@github.com/${UPSTREAM_REPO}.git"
-          
+        
           git remote add upstream "$UPSTREAM_URL" || git remote set-url upstream "$UPSTREAM_URL"
           git fetch upstream
-          
+        
           # Verifica se ci sono differenze
           if git diff --quiet HEAD upstream/${DEFAULT_BRANCH}; then
             echo "✅ Il fork è già aggiornato"
@@ -58,7 +61,7 @@ jobs:
           fi
           
           echo "📝 Rilevate differenze, tentativo di rebase..."
-          
+        
           # File da proteggere in caso di fallimento rebase
           PROTECTED_FILES=(
             ".github/workflows/E394-sync-n-link.yml"
@@ -71,7 +74,7 @@ jobs:
           else
             echo "⚠️ Rebase fallito - usando strategia reset + restore"
             git rebase --abort
-            
+        
             # Salva i file protetti
             echo "🛡️ Salvando file protetti..."
             mkdir -p /tmp/protected
@@ -82,7 +85,7 @@ jobs:
                 echo "  ✅ Salvato: $file"
               fi
             done
-            
+        
             # Reset hard a upstream (copia tutto)
             echo "🔄 Reset hard a upstream..."
             git reset --hard upstream/${DEFAULT_BRANCH}
@@ -99,7 +102,7 @@ jobs:
                 echo "  ✅ Ripristinato: $file"
               fi
             done
-            
+       
             # Committa i file ripristinati se necessario
             if [[ "$CHANGES_MADE" == "true" ]]; then
               if ! git diff --staged --quiet; then
@@ -121,6 +124,7 @@ jobs:
           # File da controllare
           FILES_TO_CHECK=(
             "Dockerfile"
+        
           )
           
           # Link problematici da cercare e sostituire
